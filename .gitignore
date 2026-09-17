@@ -62,6 +62,7 @@ venv.bak/
 # --- IDE 与编辑器 ---
 .idea/
 .vscode/
+.claude/
 *.swp
 *.swo
 *~
@@ -80,7 +81,8 @@ test_uploads/
 uploads/
 
 # --- 端到端测试图(test/ 里的真实 X 光) ---
-# 保留 .gitkeep + README.md;其余图不提交(隐私 + 体积)
+# 保留测试代码、.gitkeep + README.md;真实 X 光及其他工件不提交(隐私 + 体积)
 test/*
 !test/.gitkeep
 !test/README.md
+!test/test_app.py

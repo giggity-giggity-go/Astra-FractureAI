@@ -1,6 +1,6 @@
 /* Astra FractureAI — no-build Vue client */
 (() => {
-  const { createApp, ref, reactive, computed, nextTick, onMounted, onBeforeUnmount } = Vue;
+  const { createApp, ref, reactive, computed, nextTick, onMounted, onBeforeUnmount, provide, inject, watch } = Vue;
   const icons = ElementPlusIconsVue;
   const STORAGE_KEY = 'astra-fractureai-settings';
   const MAX_FILE_BYTES = 20 * 1024 * 1024;
@@ -25,6 +25,96 @@
     Transverse: '#ff7700', 'Transverse Displaced': '#ff334d'
   };
 
+  /* === HomeView (landing page) === */
+  const HomeView = {
+    name: 'HomeView',
+    emits: ['goto'],
+    template: `
+      <section class="home-page" tabindex="-1">
+        <div class="home-disclaimer-banner">
+          <el-icon><warning-filled /></el-icon>
+          <span>Research preview · Not a medical device · For education & demonstration only</span>
+          <button type="button" class="home-disclaimer-why" @click="openFullDisclaimer">Why?</button>
+        </div>
+        <div class="home-hero">
+          <span class="home-eyebrow">FractureAI demo · Source available on GitHub</span>
+          <h1 class="home-title">Faster X-ray reads,<br /><span class="home-title-accent">with reasoning.</span></h1>
+          <p class="home-subtitle">AI-assisted fracture detection on X-rays with GPT-6 Astra. Images are sent to your configured backend for YOLO detection and Astra explanation.</p>
+          <div class="home-cta-row">
+            <el-button class="home-cta" type="primary" size="large" @click="$emit('goto', 'workbench')">
+              <el-icon><magic-stick /></el-icon> Launch Demo
+            </el-button>
+            <a class="home-secondary-cta" href="https://github.com/giggity-giggity-go/Astra-FractureAI" target="_blank" rel="noopener noreferrer">
+              View source on GitHub ↗
+            </a>
+          </div>
+          <div class="home-health-pill" :class="healthClass">
+            <span class="home-health-dot"></span>
+            <span>{{ healthLabel }}</span>
+          </div>
+        </div>
+        <div class="home-trust-strip">
+          <span class="home-trust-item">Configurable LLM explanation</span>
+          <span class="home-trust-divider"></span>
+          <span class="home-trust-item">YOLOv8 / v9 / v11 ensemble</span>
+          <span class="home-trust-divider"></span>
+          <span class="home-trust-item">Configured backend + cloud inference</span>
+          <span class="home-trust-divider"></span>
+          <span class="home-trust-item">Source available on GitHub</span>
+        </div>
+        <div class="home-feature-grid">
+          <article class="home-feature-card">
+            <el-icon class="home-feature-icon" style="color: var(--cyan)"><aim /></el-icon>
+            <h3>3-model ensemble</h3>
+            <p>YOLOv8/v9/v11 run through the backend; we surface model disagreements, not hide them.</p>
+          </article>
+          <article class="home-feature-card">
+            <el-icon class="home-feature-icon" style="color: var(--violet)"><location /></el-icon>
+            <h3>Configurable model explanation</h3>
+            <p>The configured model service explains detection results in plain English.</p>
+          </article>
+          <article class="home-feature-card">
+            <el-icon class="home-feature-icon" style="color: var(--orange)"><data-analysis /></el-icon>
+            <h3>Configurable inference backend</h3>
+            <p>Your browser sends images to the configured backend and cloud inference services. Review your deployment before uploading sensitive data.</p>
+          </article>
+          <article class="home-feature-card">
+            <el-icon class="home-feature-icon" style="color: var(--yellow)"><picture-filled /></el-icon>
+            <h3>Source available, no signup</h3>
+            <p>Source available on GitHub. Review the code and deployment before uploading images.</p>
+          </article>
+        </div>
+        <div class="home-how-it-works">
+          <h2 class="home-section-heading">How it works</h2>
+          <ol class="home-steps">
+            <li><span class="home-step-num">01</span><strong>Upload</strong> a sample X-ray (drag-drop or browse)</li>
+            <li><span class="home-step-num">02</span><strong>Detect</strong> — the backend runs 3 YOLO models in parallel</li>
+            <li><span class="home-step-num">03</span><strong>Explain</strong> — the configured model summarizes findings through the backend</li>
+          </ol>
+        </div>
+        <div class="home-footer-cta">
+          <p>Ready for your first detection?</p>
+          <el-button type="primary" plain size="large" @click="$emit('goto', 'workbench')">
+            Launch Demo →
+          </el-button>
+        </div>
+        <div class="home-disclaimer-full" v-if="showFullDisclaimer">
+          <h3>Full disclaimer</h3>
+          <p>For research and education only. Astra-FractureAI is not a medical device and is not intended for clinical use, diagnosis, or treatment decisions. Do not upload real patient X-rays or any data containing PHI. Outputs are generated by AI and may be incorrect. Always consult a qualified radiologist.</p>
+          <el-button text @click="showFullDisclaimer = false">Close</el-button>
+        </div>
+      </section>
+    `,
+    setup() {
+      const showFullDisclaimer = Vue.ref(false);
+      const openFullDisclaimer = () => { showFullDisclaimer.value = true; };
+      const health = Vue.inject('appHealth', Vue.ref('checking'));
+      const healthLabel = Vue.computed(() => ({ checking: 'Checking API…', healthy: 'API connected', offline: 'API unavailable' }[health.value]));
+      const healthClass = Vue.computed(() => `health-${health.value}`);
+      return { showFullDisclaimer, openFullDisclaimer, healthLabel, healthClass };
+    }
+  };
+
   function loadSavedSettings() {
     try {
       const value = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
@@ -35,8 +125,12 @@
     }
   }
 
-  createApp({
-    setup() {
+  /* === WorkbenchView (existing workbench logic, full state) === */
+  const WorkbenchView = {
+    name: 'WorkbenchView',
+    emits: ['goto'],
+    template: '    <main class="shell">\n      <section class="hero">\n        <div><p class="eyebrow">CLINICAL IMAGING WORKSPACE</p><h1>看清影像，而非噪声。</h1><p class="subtitle">三路视觉模型提供可解释证据，Astra 将影像与检测结果汇总为辅助临床建议。</p></div>\n        <div class="hero-note"><span class="pulse"></span><span>所有结果须由专业医生复核</span></div>\n      </section>\n\n      <section class="workspace-grid">\n        <aside class="control-column">\n          <el-card class="panel" shadow="never">\n            <div class="panel-heading"><div><span class="step">01</span><h2>影像输入</h2></div><el-button text size="small" @click="$emit(\'goto\', \'home\')">Home</el-button><span class="muted">PNG / JPEG · ≤20 MB</span></div>\n            <div class="dropzone" :class="{ \'has-file\': imageUrl }" role="button" tabindex="0" @click="pickFile" @keydown.enter="pickFile" @keydown.space.prevent="pickFile" @dragover.prevent @drop.prevent="dropFile">\n              <img v-if="imageUrl" :src="imageUrl" alt="已上传的 X 光片预览">\n              <template v-else><el-icon><upload-filled /></el-icon><strong>拖入 X 光片</strong><span>或点击选择文件</span></template>\n              <input ref="fileInput" type="file" accept="image/png,image/jpeg" @change="onFileChange" hidden>\n            </div>\n            <div v-if="fileName" class="file-row"><el-icon><picture-filled /></el-icon><span :title="fileName">{{ fileName }}</span><el-button text type="danger" @click.stop="clearImage">移除</el-button></div>\n            <el-button v-if="imageUrl" class="full-width crop-button" plain @click="openCrop"><el-icon><crop /></el-icon> 裁剪与旋转</el-button>\n          </el-card>\n\n          <el-card class="panel" shadow="never">\n            <div class="panel-heading"><div><span class="step">02</span><h2>检测参数</h2></div><el-button text size="small" @click="resetParams">恢复默认</el-button></div>\n            <label class="field-label">置信度阈值 <b>{{ params.conf.toFixed(2) }}</b></label>\n            <el-slider v-model="params.conf" :min="0.01" :max="1" :step="0.01" show-input @change="markResultsStale"></el-slider>\n            <label class="field-label">IoU 阈值 <b>{{ params.iou.toFixed(2) }}</b></label>\n            <el-slider v-model="params.iou" :min="0" :max="0.95" :step="0.01" show-input @change="markResultsStale"></el-slider>\n            <label class="field-label">推理尺寸 <b>{{ params.imgsz }} px</b></label>\n            <el-select v-model="params.imgsz" class="full-width" @change="markResultsStale"><el-option v-for="size in [320, 640, 1280]" :key="size" :label="size + \' px\'" :value="size"></el-option></el-select>\n            <p v-if="resultsStale" class="stale-note">参数已变化，请重新检测以更新结果。</p>\n            <el-button class="detect-button" type="primary" :loading="detecting" :disabled="!imageFile" @click="runDetection"><el-icon><magic-stick /></el-icon>{{ detecting ? \'三模型分析中…\' : \'开始骨折检测\' }}</el-button>\n          </el-card>\n        </aside>\n\n        <section class="viewer-column">\n          <el-card class="panel viewer-panel" shadow="never">\n            <div class="panel-heading viewer-heading"><div><span class="step">03</span><h2>医学影像查看器</h2></div><span class="zoom-label">{{ Math.round(view.zoom * 100) }}%</span></div>\n            <div class="tool-strip" role="toolbar" aria-label="影像查看工具">\n              <el-button v-for="tool in tools" :key="tool.key" size="small" :type="view.tool === tool.key ? \'primary\' : \'default\'" :plain="view.tool !== tool.key" @click="setTool(tool.key)" :title="tool.hint">{{ tool.label }}</el-button>\n              <el-button size="small" plain @click="resetView" title="恢复原始视口并清除测量"><el-icon><refresh-left /></el-icon> 重置</el-button>\n            </div>\n            <div class="canvas-wrap" ref="canvasWrap" @wheel.prevent="onWheel" @pointerdown="pointerDown" @pointermove="pointerMove" @pointerup="pointerUp" @pointercancel="pointerUp" @pointerleave="pointerUp">\n              <canvas ref="canvas" :class="[\'tool-\' + view.tool, { dragging: view.dragging }]" aria-label="X 光片与 AI 检测叠加层"></canvas>\n              <div v-if="!imageUrl" class="empty-view"><el-icon><picture-filled /></el-icon><span>影像将在此处显示</span></div>\n              <div class="viewer-legend" v-if="imageUrl"><span><i class="position-dot"></i>骨折位置</span><span><i class="range-dot"></i>骨折范围</span></div>\n              <div class="canvas-hint" v-if="imageUrl">{{ activeToolHint }}</div>\n            </div>\n            <div class="viewer-controls">\n              <div class="control-group"><span>窗宽</span><el-slider v-model="view.window" :min="20" :max="500" :show-tooltip="false" @input="draw"></el-slider><span class="value">{{ view.window }}</span></div>\n              <div class="control-group"><span>窗位</span><el-slider v-model="view.level" :min="0" :max="255" :show-tooltip="false" @input="draw"></el-slider><span class="value">{{ view.level }}</span></div>\n            </div>\n            <div class="measurement-row" v-if="measurement"><span>{{ measurement }}</span><el-button text size="small" @click="clearMeasurements">清除测量</el-button></div>\n          </el-card>\n        </section>\n      </section>\n\n      <section class="results-section" v-if="pipelineState !== \'idle\' || errorMessage">\n        <div class="section-title"><div><p class="eyebrow">MODEL OUTPUT</p><h2>临床证据</h2></div><span v-if="results" class="timing">总耗时 {{ formatTime(results.processing_time) }}</span></div>\n        <div class="stage-track" aria-live="polite"><div v-for="stage in stages" :key="stage.key" class="stage" :class="stage.state"><span>{{ stage.state === \'done\' ? \'✓\' : stage.number }}</span>{{ stage.label }}</div></div>\n        <el-alert v-if="partialErrors.length" class="partial-warning" :title="partialErrorText" type="warning" show-icon :closable="false"></el-alert>\n        <el-alert v-if="errorMessage" :title="errorMessage" type="error" show-icon :closable="false"></el-alert>\n\n        <div class="result-grid" v-if="results">\n          <article v-for="card in resultCards" :key="card.key" class="result-card">\n            <div class="card-top"><span class="card-icon" :class="card.tone"><el-icon><component :is="card.icon" /></el-icon></span><span class="card-time">{{ formatTime(card.time) }}</span></div>\n            <h3>{{ card.title }}</h3>\n            <div v-if="card.items.length" class="detections">\n              <div v-for="(item, index) in card.items" :key="card.key + index" class="detection-detail">\n                <div class="detection-line"><span><i v-if="card.key === \'kind\'" class="kind-dot" :style="{ background: kindColor(item.name) }"></i>{{ displayLabel(card.key, item) }}</span><strong>{{ formatConfidence(item.confidence) }}</strong></div>\n                <el-progress :percentage="confidencePercent(item.confidence)" :show-text="false" :stroke-width="4" :color="confidenceColor(item.confidence)"></el-progress>\n                <small v-if="card.key !== \'kind\' && formatBox(item.box)">{{ formatBox(item.box) }}</small>\n                <small v-if="card.key === \'range\' && segmentCount(item)">{{ segmentCount(item) }} 个轮廓点</small>\n              </div>\n            </div>\n            <p v-else class="no-detection">阈值以上未发现结果。</p>\n            <p v-if="card.key === \'kind\'" class="card-footnote">类型分类不叠加至影像</p>\n          </article>\n        </div>\n\n        <article v-if="results" class="explanation-card">\n          <div class="explanation-head"><div><p class="eyebrow">ASTRA CLINICAL ASSISTANT</p><h2>辅助评估报告</h2></div><span class="actual-model">{{ selectedModel || \'等待模型\' }}</span></div>\n          <div v-if="explaining && !explanation" class="thinking-state"><i></i>模型正在综合影像与 YOLO 证据…</div>\n          <div v-if="explanation" class="markdown" :class="{ streaming: explaining }" v-html="renderMarkdown(explanation)"></div>\n          <el-button v-if="!explaining && pipelineState === \'error\' && results" type="primary" plain @click="runExplanation">重试生成报告</el-button>\n          <p class="clinical-disclaimer">本报告仅用于辅助筛查与演示，不构成诊断或治疗意见。</p>\n        </article>\n      </section>\n    </main>\n    <el-dialog v-model="settingsOpen" title="连接设置" width="min(92vw, 480px)">\n      <p class="dialog-help">浏览器只保存模型选择，不接触任何 API 密钥。</p>\n      <label class="field-label">可用 LLM 模型</label><el-select v-model="draftSettings.model" class="full-width" :loading="health === \'checking\'" placeholder="选择模型"><el-option v-for="model in availableModels" :key="model" :label="model" :value="model"></el-option></el-select>\n      <template #footer><el-button @click="settingsOpen = false">取消</el-button><el-button type="primary" @click="saveSettings">保存并检查</el-button></template>\n    </el-dialog>\n\n    <el-dialog v-model="cropOpen" title="裁剪影像" width="min(92vw, 800px)" @opened="initCropper" @closed="destroyCropper">\n      <div class="crop-toolbar"><el-button @click="cropRotate(-90)">左转 90°</el-button><el-button @click="cropRotate(90)">右转 90°</el-button><el-button @click="cropReset">重置裁剪</el-button></div>\n      <div class="crop-stage"><img ref="cropImage" :src="imageUrl" alt="裁剪预览"></div>\n      <template #footer><el-button @click="cropOpen = false">取消</el-button><el-button type="primary" @click="applyCrop">应用裁剪</el-button></template>\n    </el-dialog>',
+    setup(_props, { expose }) {
       const canvas = ref(null);
       const canvasWrap = ref(null);
       const fileInput = ref(null);
@@ -51,6 +145,9 @@
       const FIXED_MODELS = ['gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-luna'];
       const availableModels = ref(FIXED_MODELS);
       const health = ref('checking');
+      // Mirror local health to the root-level shared ref so HomeView's pill stays in sync.
+      const setAppHealth = inject('setAppHealth', null);
+      watch(health, (val) => { if (setAppHealth) setAppHealth(val); });
       const settingsOpen = ref(false);
       const cropOpen = ref(false);
       const errorMessage = ref('');
@@ -86,6 +183,8 @@
 
       const api = path => path;
       const selectedModel = computed(() => settings.model);
+      const setAppSelectedModel = inject('setAppSelectedModel', null);
+      watch(selectedModel, (model) => { if (setAppSelectedModel) setAppSelectedModel(model); }, { immediate: true });
       const detecting = computed(() => pipelineState.value === 'detecting_yolo');
       const explaining = computed(() => ['llm_thinking', 'llm_streaming'].includes(pipelineState.value));
       const partialErrors = computed(() => Array.isArray(results.value?.errors) ? results.value.errors : []);
@@ -588,6 +687,8 @@
         resizeObserver = new ResizeObserver(() => draw());
         if (canvasWrap.value) resizeObserver.observe(canvasWrap.value);
       });
+      expose({ openSettings });
+
       onBeforeUnmount(() => {
         cancelRequests();
         destroyCropper();
@@ -607,7 +708,51 @@
         formatTime, formatBox, segmentCount, icons
       };
     }
-  })
+  };
+
+  /* === Root app (router + topbar shared state) === */
+  const rootApp = createApp({
+
+    setup() {
+      const currentView = ref('home');   // 'home' | 'workbench'
+      const goto = (name) => { currentView.value = name; };
+      const workbench = ref(null);
+      const openSettings = () => { if (currentView.value !== 'workbench') goto('workbench'); nextTick(() => workbench.value?.openSettings()); };
+      const hasOpenElementPlusDialog = () => Array.from(document.querySelectorAll('.el-overlay')).some((overlay) => {
+        const dialog = overlay.querySelector('.el-dialog');
+        if (!dialog) return false;
+        const style = window.getComputedStyle(overlay);
+        return style.display !== 'none' && style.visibility !== 'hidden';
+      });
+      const handleGlobalKey = (event) => {
+        if (event.key === 'Escape' && currentView.value === 'workbench' &&
+            !event.target?.closest?.('input, textarea, select, [contenteditable]') &&
+            !event.target?.isContentEditable && !hasOpenElementPlusDialog()) {
+          event.preventDefault();
+          goto('home');
+        }
+      };
+      // Shared health state: WorkbenchView mutates via this ref, HomeView reads via inject.
+      const sharedHealth = ref('checking');
+      const healthLabel = computed(() => ({ checking: 'Checking API…', healthy: 'API connected', offline: 'API unavailable' }[sharedHealth.value]));
+      const healthClass = computed(() => `health-${sharedHealth.value}`);
+      provide('appHealth', sharedHealth);
+      // Expose sharedHealth so WorkbenchView can read it (it has its own ref but we keep them in sync below).
+      // WorkbenchView will continue to own its own `health` ref; we mirror it via watch in onMounted.
+      // Simpler: register a global setter that WorkbenchView will call after its health ref updates.
+      const setHealth = (val) => { sharedHealth.value = val; };
+      provide('setAppHealth', setHealth);
+      const sharedModel = ref(loadSavedSettings().llmModel || '');
+      provide('appSelectedModel', sharedModel);
+      provide('setAppSelectedModel', (model) => { sharedModel.value = model; });
+      onMounted(() => { document.addEventListener('keydown', handleGlobalKey); });
+      onBeforeUnmount(() => { document.removeEventListener('keydown', handleGlobalKey); });
+      return { currentView, goto, workbench, openSettings, healthLabel, healthClass, selectedModel: sharedModel };
+    }
+  });
+  rootApp
+    .component('home-view', HomeView)
+    .component('workbench-view', WorkbenchView)
     .use(ElementPlus)
     .component('setting', icons.Setting)
     .component('upload-filled', icons.UploadFilled)
@@ -618,5 +763,6 @@
     .component('aim', icons.Aim)
     .component('location', icons.Location)
     .component('data-analysis', icons.DataAnalysis)
+    .component('warning-filled', icons.WarningFilled)
     .mount('#app');
 })();
