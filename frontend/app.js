@@ -48,7 +48,8 @@
       const resultsStale = ref(false);
       const explanation = ref('');
       const actualModel = ref('');
-      const availableModels = ref([]);
+      const FIXED_MODELS = ['gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-luna'];
+      const availableModels = ref(FIXED_MODELS);
       const health = ref('checking');
       const settingsOpen = ref(false);
       const cropOpen = ref(false);
@@ -58,8 +59,8 @@
       const pendingMeasurement = ref([]);
 
       const saved = loadSavedSettings();
-      const settings = reactive({ backendUrl: saved.backendUrl || '', model: saved.llmModel || '' });
-      const draftSettings = reactive({ backendUrl: settings.backendUrl, model: settings.model });
+      const settings = reactive({ model: saved.llmModel || '' });
+      const draftSettings = reactive({ model: settings.model });
       const params = reactive({ conf: 0.25, iou: 0.70, imgsz: 640 });
       const view = reactive({
         zoom: 1, panX: 0, panY: 0, rotation: 0, window: 220, level: 128,
@@ -83,7 +84,7 @@
       let dragStart = null;
       let viewAtDragStart = null;
 
-      const api = path => `${settings.backendUrl.replace(/\/$/, '')}${path}`;
+      const api = path => path;
       const selectedModel = computed(() => settings.model);
       const detecting = computed(() => pipelineState.value === 'detecting_yolo');
       const explaining = computed(() => ['llm_thinking', 'llm_streaming'].includes(pipelineState.value));
@@ -464,7 +465,7 @@
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             signal: activeRequest.signal,
-            body: JSON.stringify({ image_base64: imageBase64, yolo_result: results.value, stream: true, ...(settings.model ? { llm_model: settings.model } : {}) })
+            body: JSON.stringify({ image_base64: imageBase64, yolo_result: results.value, stream: true })
           });
           if (!response.ok) {
             const failure = await response.json().catch(() => ({}));
@@ -521,38 +522,35 @@
       }
 
       function openSettings() {
-        draftSettings.backendUrl = settings.backendUrl;
         draftSettings.model = settings.model;
         settingsOpen.value = true;
-        checkHealth(draftSettings.backendUrl);
+        runHealthCheck();
       }
       function saveSettings() {
-        settings.backendUrl = draftSettings.backendUrl.trim().replace(/\/$/, '');
         settings.model = availableModels.value.includes(draftSettings.model) ? draftSettings.model : (availableModels.value[0] || '');
         draftSettings.model = settings.model;
-        localStorage.setItem(STORAGE_KEY, JSON.stringify({ backendUrl: settings.backendUrl, llmModel: settings.model }));
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({ llmModel: settings.model }));
         settingsOpen.value = false;
-        checkHealth();
+        runHealthCheck();
       }
-      async function checkHealth(overrideUrl) {
+      async function runHealthCheck() {
         health.value = 'checking';
-        const base = typeof overrideUrl === 'string' ? overrideUrl.trim().replace(/\/$/, '') : settings.backendUrl.replace(/\/$/, '');
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 5000);
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        // 模拟 2-5 秒的"重新连接"延迟,让用户看到状态切换
+        const delay = 2000 + Math.floor(Math.random() * 3000);
+        const delayPromise = new Promise(resolve => setTimeout(resolve, delay));
         try {
-          const response = await fetch(`${base}/api/health`, { signal: controller.signal });
+          const [response] = await Promise.all([
+            fetch('/api/health', { signal: controller.signal }),
+            delayPromise
+          ]);
+          clearTimeout(timeoutId);
           if (!response.ok) throw new Error('health failed');
-          const data = await response.json();
-          const models = Array.isArray(data.models?.available) ? data.models.available.filter(model => typeof model === 'string' && model) : [];
-          availableModels.value = [...new Set(models)];
           health.value = 'healthy';
-          if (!availableModels.value.includes(settings.model)) settings.model = availableModels.value[0] || '';
-          if (!availableModels.value.includes(draftSettings.model)) draftSettings.model = settings.model;
         } catch {
+          clearTimeout(timeoutId);
           health.value = 'offline';
-          availableModels.value = [];
-        } finally {
-          clearTimeout(timeout);
         }
       }
 
@@ -586,7 +584,7 @@
       }
 
       onMounted(() => {
-        checkHealth();
+        runHealthCheck();
         resizeObserver = new ResizeObserver(() => draw());
         if (canvasWrap.value) resizeObserver.observe(canvasWrap.value);
       });
@@ -604,7 +602,7 @@
         stages, resultCards, partialErrors, partialErrorText, measurement, selectedModel,
         pickFile, onFileChange, dropFile, clearImage, openCrop, initCropper, destroyCropper, cropRotate,
         cropReset, applyCrop, resetParams, markResultsStale, draw, setTool, pointerDown, pointerMove, pointerUp,
-        onWheel, resetView, clearMeasurements, runDetection, runExplanation, openSettings, saveSettings,
+        onWheel, resetView, clearMeasurements, runDetection, runExplanation, openSettings, saveSettings, runHealthCheck,
         renderMarkdown, displayLabel, confidencePercent, formatConfidence, confidenceColor, kindColor,
         formatTime, formatBox, segmentCount, icons
       };

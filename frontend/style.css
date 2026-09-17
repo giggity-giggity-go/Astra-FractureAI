@@ -51,7 +51,7 @@ a { color: inherit; }
 .brand > span:last-child { display: grid; }
 .brand strong { font-size: 16px; letter-spacing: .02em; }
 .brand small { color: var(--muted); font: 11px ui-monospace, SFMono-Regular, Consolas, monospace; letter-spacing: .09em; }
-.brand-mark { display: grid; width: 34px; height: 34px; place-items: center; border-radius: 9px; background: linear-gradient(135deg, var(--cyan), #88f1d1); color: #071017; font-size: 19px; font-weight: 800; }
+.brand-mark { display: block; width: 34px; height: 34px; border-radius: 9px; object-fit: cover; }
 .header-actions { display: flex; align-items: center; gap: 17px; }
 .status-pill { display: flex; align-items: center; gap: 7px; color: var(--muted); font: 11px ui-monospace, SFMono-Regular, Consolas, monospace; }
 .status-pill i, .thinking-state i { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
