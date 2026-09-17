@@ -59,6 +59,8 @@ python app.py
 
 启动后打开 `http://localhost:<PORT>/`（实际端口以 `.env` 的 `PORT` 为准）。Flask 在 `/` 提供 `frontend/index.html`,在 `/frontend/<path>` 提供静态资源；页面与 API 同源,无需 npm 或前端构建命令。
 
+**前端没有独立的启动命令** —— 没有 `npm run dev` / `npm run build` / `vite` 这一步。Vue 3 + Element Plus + Cropper.js + marked + DOMPurify 全部走 unpkg 上的固定版本 CDN,源码就是 `frontend/{index.html, app.js, style.css}` 三个纯静态文件,由 Flask 同源托管。这一条 `python app.py` **同时拉起**后端 Flask 与前端静态托管;前端页面与 `/api/*` 共享同一个 PORT(本实例 `7895`)。重启 / 换 `.env` 后再启动前请先看 §2.4「停止与重启」——直接二次启动会在 Windows 上撞 `OSError: [WinError 10048]`,因为旧 Flask 进程仍占着 PORT。
+
 启动日志确认:
 
 ```
