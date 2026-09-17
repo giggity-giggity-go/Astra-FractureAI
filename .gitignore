@@ -1,0 +1,86 @@
+# =============================================================================
+# Astra-FractureAI · Git ignore rules
+# =============================================================================
+# 即使本项目暂不进 git,仍按提交标准写,方便后续接 GitHub
+
+# --- 密钥与环境变量(最优先排除) ---
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# --- Python 字节码与缓存 ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# --- 构建产物 ---
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# --- 测试与覆盖率 ---
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+
+# --- 类型检查 ---
+.mypy_cache/
+.ruff_cache/
+.dmypy.json
+dmypy.json
+
+# --- 虚拟环境 ---
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# --- IDE 与编辑器 ---
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# --- 日志与临时文件 ---
+*.log
+logs/
+*.tmp
+*.bak
+*.swp
+
+# --- 上传的测试图片(临时调试用,不提交) ---
+test_uploads/
+uploads/
+
+# --- 端到端测试图(test/ 里的真实 X 光) ---
+# 保留 .gitkeep + README.md;其余图不提交(隐私 + 体积)
+test/*
+!test/.gitkeep
+!test/README.md

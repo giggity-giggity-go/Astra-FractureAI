@@ -1,0 +1,3 @@
+# Keep this directory under version control even when empty.
+# test/ holds end-to-end X-ray fixtures that are .gitignore'd by content
+# (see test/README.md §5). Without this file, `git add test/` is a no-op.
