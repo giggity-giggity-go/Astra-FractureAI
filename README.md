@@ -15,7 +15,7 @@ Ultralytics Cloud YOLO 三模型并行(position / range / kind)
 GPT-6 Astra 多模态(看图 + 读 YOLO 结果)→ 临床建议(流式输出)
 ```
 
-后端用 Flask + OpenAI Python SDK,YOLO 三模型走 Ultralytics Cloud,LLM 走 OpenAI 兼容端点(默认 MiniMax-M3,9-18 后切 Astra)。完整设计见 [`../Astra-FractureAI后端设计.md`](../Astra-FractureAI后端设计.md)。
+后端用 Flask + OpenAI Python SDK,YOLO 三模型走 Ultralytics Cloud,LLM 走 OpenAI 兼容端点(默认 MiniMax-M3,9-18 后切 Astra)。前端是由 Flask 同源交付的 Vue 3 无构建单页应用,提供裁剪、医学影像 Canvas 工具、检测叠加、结果卡片和流式安全 Markdown 报告。完整设计见 [`../Astra-FractureAI后端设计.md`](../Astra-FractureAI后端设计.md)、[`../前端设计.md`](../前端设计.md) 与前端独立 [`frontend/README.md`](frontend/README.md)。
 
 ---
 
@@ -54,8 +54,10 @@ copy .env.example .env     # Windows cmd/PowerShell
 
 ```bash
 python app.py
-# 默认监听 0.0.0.0:7895(PORT=7895,可在 .env 覆盖)
+# 端口由 .env 的 PORT 决定(本实例 7895);若 PORT 未设置,app.py 默认 8080
 ```
+
+启动后打开 `http://localhost:<PORT>/`（实际端口以 `.env` 的 `PORT` 为准）。Flask 在 `/` 提供 `frontend/index.html`,在 `/frontend/<path>` 提供静态资源；页面与 API 同源,无需 npm 或前端构建命令。
 
 启动日志确认:
 
@@ -64,15 +66,57 @@ python app.py
                 Primary LLM: MiniMax-M3, Fallback: MiniMax-M3
 ```
 
+> 重启 / 换 `.env` 后再启动前请先看 §2.4「停止与重启」——直接二次启动会在 Windows 上撞 `OSError: [WinError 10048]`,因为旧 Flask 进程仍占着 PORT(本实例 `7895`)。
+
+### 2.4 停止与重启 Flask 进程
+
+Flask dev server(Werkzeug)不带 daemon 模式,所以**每次重启都必须先杀掉旧进程**,否则会立刻报端口占用。下方命令按你常用的 shell 三选一即可。
+
+**首选(前台 Ctrl+C)**:在跑 `python app.py` 的那个终端按 **`Ctrl+C`**。Werkzeug 会捕获 SIGINT 跑 Flask 清理钩子(关 socket / join thread),不会留下半挂进程。**直接关窗口**等于 `TerminateProcess`,不跑清理,通常也死,但端口可能卡 `TIME_WAIT` 几十秒。
+
+**从别的 shell 优雅终止**(走 WM_CLOSE,不是 `TerminateProcess`):
+
+```powershell
+# PowerShell(推荐,一行查 PID + 一行优雅终止,Windows 11 自带)
+Get-NetTCPConnection -LocalPort 7895 -State Listen -ErrorAction SilentlyContinue |
+    Select-Object -ExpandProperty OwningProcess |
+    ForEach-Object { Stop-Process -Id $_ }   # 不加 -Force = 优雅
+```
+
+```cmd
+:: cmd(备选)
+netstat -ano | findstr :7895
+:: 最后一列就是 PID,记下来,然后:
+taskkill /PID <PID>            REM  不加 /F = 优雅(WM_CLOSE)
+```
+
+```bash
+# Bash on Windows(Git Bash)— 注意 MSYS 路径转换,双斜杠转义:
+netstat -ano | grep 7895
+taskkill //PID <PID>           # 不加 //F = 优雅
+```
+
+> **真正挂死时才用强制杀**:`Stop-Process -Id <PID> -Force` / `taskkill /PID <PID> /F` / `taskkill //PID <PID> //F`。跳过 Flask 清理,正在跑的 SSE 流和 `ThreadPoolExecutor(max_workers=3)` 会被硬杀;但只要下次能正常重启就没事。
+
+**杀完确认端口已释放**(再跑一次应该没有 LISTENING 行;若还有,等 30–60 s `TIME_WAIT` 过期,或换 `.env` 的 `PORT`):
+
+```powershell
+Get-NetTCPConnection -LocalPort 7895 -State Listen -ErrorAction SilentlyContinue   # 应空
+```
+
+**重启**:回到 §2.1 激活 conda,然后 `python app.py`,按 `Ctrl+C` 又是同一个循环。
+
 ---
 
 ## 3. 端点
 
-| 方法 | 路径 | 用途 | 输入 |
+| 方法 | 路径 | 用途 | 输入 / 备注 |
 |---|---|---|---|
-| GET | `/api/health` | 健康检查 | 无 |
-| POST | `/api/detect` | YOLO 三模型并行检测 | `multipart/form-data` 字段 `file`(图)+ 可选 `conf`/`iou`/`imgsz` |
-| POST | `/api/explain` | LLM 临床建议(可选流式) | `application/json` `{image_base64, yolo_result, stream?}` |
+| GET | `/` | Vue 3 单页前端(`frontend/index.html`) | 同源交付,无参数 |
+| GET | `/frontend/<path>` | 前端静态资源(`app.js` / `style.css` 等) | 路径相对于 `frontend/` 目录 |
+| GET | `/api/health` | 健康检查 + 已配置模型列表 | 返回 `models.available`(`LLM_MODEL_PRIMARY` 与 `LLM_FALLBACK` 去重保序),不返回任何凭据 |
+| POST | `/api/detect` | YOLO 三模型并行检测 | `multipart/form-data`: `file`(PNG/JPEG ≤ 20MB)+ `conf ∈ [0.01, 1.00]` + `iou ∈ [0.00, 0.95]` + `imgsz ∈ {320, 640, 1280}`。返回 `image_size = {width, height}` 表示 YOLO 实际接收的预处理图尺寸,前端用它把检测坐标投影回源图。3 模型全失败时返回 502 + `errors[]`,**不含** `detail` 字段以避免上游异常泄漏 |
+| POST | `/api/explain` | LLM 临床建议(可选流式) | `application/json`:`image_base64` + `yolo_result` + 可选 `stream: true` + 可选 `llm_model ∈ configured_models()`(非法值返回 400 `INVALID_MODEL`)。SSE 首字节前 fallback,已输出正文时不重播;错误响应只含 `error` + `code`,不回显原始异常 |
 
 详细 schema 见 [`../Astra-FractureAI后端设计.md` §3](../Astra-FractureAI后端设计.md)。
 
@@ -80,21 +124,25 @@ python app.py
 
 ## 4. 测试
 
-### 4.1 单元测试(7 套件)
+### 4.1 后端测试（9 项核心断言 + 4 套扩展函数 = 13 个 ✓ 编号）
 
 ```bash
 python test/test_app.py
 ```
 
-| # | 套件 | 验证内容 |
-|---|---|---|
-| 1 | `/api/health` | 200 + `{status:"healthy", models:{...}}` |
-| 2 | `clean_thinking` | 5 种 thinking 格式(`<think>` / `<thought>` / ` ```thinking``` ` / 未闭合 / 干净文本) |
-| 3 | `StreamThinkingStripper` | 跨 chunk 拼接 + flush |
-| 4 | Image 管道 | PNG → JPEG 1024px + q85 + base64 |
-| 5 | 非法图拒绝 | 16 字节以下 / magic 不符 → ValueError |
-| 6 | `/api/detect` 校验 | 缺 `file` → 400 |
-| 7 | `/api/explain` 校验 | 缺 `image_base64` → 400 |
+`test/test_app.py` 现含 4 个测试函数,`__main__` 顺序执行:
+
+- `test_all`(9 个核心断言):`/api/health`、`clean_thinking`、`StreamThinkingStripper`、图片管道、非法图拒绝、`/api/detect` 输入校验、`/api/explain` 输入校验、`/api/detect` 的 `image_size` 元数据、`/api/detect` 参数范围(conf/iou/imgsz)。
+- `test_configured_models_health_and_llm_routing`:`configured_models()` 去重 + health 暴露 `models.available`、非法 `llm_model` 拒绝、合法非流式首选模型与 fallback。
+- `test_sse_fallback_framing_and_safe_error`:SSE 首字节前 fallback + 唯一 `[DONE]` 终止 + 安全 502(无 `detail`)不回显异常。
+- `test_frontend_routes_after_assets_exist`:`/` 与 `/frontend/*` 静态资源 200。
+
+跑法:
+
+```bash
+python test/test_app.py
+# 应输出 13 行 ✓ 编号通过
+```
 
 ### 4.2 端到端测试 ✅(2026-09-17 17:22 全过)
 
@@ -136,6 +184,8 @@ TOTAL: 68.06s
 + LLM_MODEL_PRIMARY=gpt-6-astra
 ```
 
+> 备注:`app.py` 代码层面 `LLM_FALLBACK` 默认值已是 `deepseek-chat`,`LLM_MODEL_PRIMARY` 默认 `MiniMax-M3`(优先级: `LLM_MODEL_PRIMARY` > `OPENAI_MODEL` > `MiniMax-M3`)。本节说的是 `.env` 实际值,不是代码默认。
+
 ### 5.2 非默认端口
 
 `PORT=7895`,**不是** Flask 默认的 `8080`。本机调试无需调整;部署到云平台时,外部 URL 要对应转发到 `7895`,或回 `PORT=8080`。
@@ -146,6 +196,7 @@ TOTAL: 68.06s
 - 真实 key 已进 Claude 对话上下文,**强烈建议** rotate:
   - `OPENAI_API_KEY` → MiniMax 控制台
   - `YOLO_API_KEY` → Ultralytics Cloud 控制台
+- 前端 `localStorage` 只持久化 `{backendUrl, llmModel}`(键名 `astra-fractureai-settings`)。**不接触、不缓存任何 API key**;所有 LLM 输出经 `marked.parse()` + `DOMPurify.sanitize()` 才进 `v-html`。
 
 ### 5.4 Pillow 12 / OpenAI SDK 3.x 兼容
 
@@ -156,10 +207,10 @@ TOTAL: 68.06s
 
 `app.py` **所有代码字符串**(raise / error / response)均为英文,LLM prompt 也是英文(OpenAI Vision 最佳实践结构:5 段 Markdown `## Impression` / `## YOLO Correlation` / `## Recommended Workup` / `## Acute Management` / `## Safety Disclaimer`)。
 
-- ✅ 注释 + docstring 保留中文(便于国内开发者阅读)
+- ✅ 后端代码字符串和 LLM prompt 仍使用英文
+- ✅ 前端采用中文医学工作台文案(位置/范围/类型中文标签、阶段状态、错误提示、工具按钮、对话框),模型输出原文经 Markdown 渲染保留
 - ✅ `SYSTEM_PROMPT` / `USER_TEXT_TEMPLATE` 已拆为模块级常量,便于将来加 `SYSTEM_PROMPT_ZH_CN` 走 `locale=...` 切换
-- ✅ 7 套件测试同步更新关键字(`"仅支持"` → `"accepted"`)
-- ⚠️ **副作用**:LLM 输出也是英文,前端 UI 文案如果保留中文,可能要做 i18n
+- ✅ `/api/detect` 三模型全失败返回的 502 响应只含 `error` + `errors[]`,**不含**可能携带上游凭据或内部异常的 `detail` 字段(2026-09-17 review 修复)
 
 ---
 
@@ -169,10 +220,11 @@ TOTAL: 68.06s
 |---|---|---|
 | 1 | 切 Astra | `.env` 加 `LLM_MODEL_PRIMARY=gpt-6-astra` |
 | 2 | 真正异构 fallback | `LLM_FALLBACK=deepseek-chat` |
-| 3 | 跑测试 | `python test/test_app.py`(7 套件仍应全过) |
+| 3 | 跑测试 | `python test/test_app.py`(13 项断言应全过) |
 | 4 | 端到端 | `humurs_fracture1.png` 真打 |
 | 5 | 录视频 | < 2 分钟 demo |
 | 6 | 投稿 | Product Hunt 上线 + GitHub 仓库公开 |
+| 7 | 前端最终 overlay 重验 | Ultralytics Cloud 9-17 临时返回 `NETWORK_ERROR` / `TIMEOUT`,导致 `/api/detect` 返回 502。上游恢复后用 `humurs_fracture1.png` 重跑并确认 bbox/polygon 在 zoom/pan/rotate 后坐标仍对齐 |
 
 ---
 
@@ -194,13 +246,22 @@ TOTAL: 68.06s
 
 ```
 Astra-FractureAI/
-├── .env                  # 真实 key,严禁 git(1.7 KB)
-├── .env.example          # 12 key 模板,可提交(2.4 KB)
+├── .env                  # 真实 key,严禁 git
+├── .env.example          # 配置模板,可提交
 ├── .gitignore            # Python + .env 排除
-├── app.py                # Flask 后端(663 行,30 KB)
-├── test/                 # 端到端测试(test_app.py 7 套件 + README + .gitkeep)
-├── requirements.txt      # 8 个 demo 依赖(34 行)
-└── README.md             # 本文件
+├── app.py                # Flask API、模型路由、SSE 与前端静态服务
+├── frontend/
+│   ├── index.html        # Vue/Element Plus 单页界面与固定 CDN 依赖
+│   ├── app.js            # 上传、Canvas、API、SSE 和设置逻辑
+│   ├── style.css         # 暗色响应式医学工作台
+│   └── README.md         # 前端运行、CDN 版本与安全边界
+├── test/
+│   ├── test_app.py       # 后端契约、模型路由、SSE 与静态路由测试(13 项断言)
+│   ├── test_e2e.py       # 真实外部服务 E2E
+│   ├── e2e_results.md    # 端到端 8 次调试 timeline
+│   └── test_fracture_img/# 本地 X 光测试图片
+├── requirements.txt
+└── README.md
 ```
 
 ---

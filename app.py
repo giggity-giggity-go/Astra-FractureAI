@@ -15,7 +15,7 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from dotenv import load_dotenv
-from flask import Flask, Response, jsonify, request, stream_with_context
+from flask import Flask, Response, jsonify, request, send_from_directory, stream_with_context
 from flask_cors import CORS
 from openai import OpenAI
 from PIL import Image, ImageOps, UnidentifiedImageError
@@ -56,6 +56,12 @@ LLM_MODEL_PRIMARY = (
 # Fallback 模型,Primary 抛任何异常都自动切这里(§8.2)
 # 选 deepseek-chat:便宜、响应快、医疗问答可接受
 LLM_FALLBACK = os.getenv("LLM_FALLBACK", "deepseek-chat")
+
+
+def configured_models() -> List[str]:
+    """Return configured LLM model names in preference order without duplicates."""
+    return list(dict.fromkeys(model for model in (LLM_MODEL_PRIMARY, LLM_FALLBACK) if model))
+
 
 YOLO_API_KEY = os.getenv("YOLO_API_KEY", "")
 YOLO_URLS: Dict[str, Optional[str]] = {
@@ -596,10 +602,17 @@ def chat_once(model: str, messages: List[Dict[str, Any]], stream: bool = False) 
         return openai_client.chat.completions.create(**params)
 
 
+def model_candidates(requested_model: Optional[str] = None) -> List[str]:
+    """Return the requested configured model followed by the configured fallback."""
+    preferred = requested_model or LLM_MODEL_PRIMARY
+    return list(dict.fromkeys(model for model in (preferred, LLM_FALLBACK) if model))
+
+
 def explain_with_fallback(
     image_base64: str,
     mime: str,
     yolo_result: Dict[str, Any],
+    requested_model: Optional[str] = None,
 ) -> Tuple[str, str]:
     """Execute non-streaming explanation with primary -> fallback model routing (§8.2).
 
@@ -615,26 +628,19 @@ def explain_with_fallback(
         - 不在这里做"重试同模型",重复失败已说明不是网络抖动,重试没意义。
     """
     messages = build_clinical_messages(image_base64, mime, yolo_result)
+    candidates = model_candidates(requested_model)
 
-    # 1. Try Primary
-    try:
-        logger.info("Calling primary LLM: %s", LLM_MODEL_PRIMARY)
-        resp = chat_once(LLM_MODEL_PRIMARY, messages, stream=False)
-        content = extract_final_text(resp.choices[0])
-        if content:
-            return content, LLM_MODEL_PRIMARY
-    except Exception as e:
-        logger.error("Primary LLM %s failed: %s", LLM_MODEL_PRIMARY, e)
-
-    # 2. Try Fallback
-    try:
-        logger.warning("Attempting fallback LLM: %s", LLM_FALLBACK)
-        resp = chat_once(LLM_FALLBACK, messages, stream=False)
-        content = extract_final_text(resp.choices[0])
-        if content:
-            return content, LLM_FALLBACK
-    except Exception as e:
-        logger.error("Fallback LLM %s failed: %s", LLM_FALLBACK, e)
+    for index, model in enumerate(candidates):
+        label = "primary" if index == 0 else "fallback"
+        try:
+            logger.info("Calling %s LLM: %s", label, model)
+            resp = chat_once(model, messages, stream=False)
+            content = extract_final_text(resp.choices[0])
+            if content:
+                return content, model
+            logger.warning("%s LLM %s returned empty content", label.capitalize(), model)
+        except Exception as e:
+            logger.error("%s LLM %s failed: %s", label.capitalize(), model, e)
 
     # 上层 /api/explain 会把 RuntimeError 翻译成 HTTP 502 Bad Gateway:
     #   502 而非 500,因为 LLM 是"上游网关"角色,符合 RFC 7231 对 Bad Gateway 的语义。
@@ -647,6 +653,19 @@ def explain_with_fallback(
 # ==============================================================================
 app = Flask(__name__)
 CORS(app)
+FRONTEND_DIR = os.path.join(_BASE_DIR, "frontend")
+
+
+@app.route("/", methods=["GET"])
+def frontend_index() -> Any:
+    """Serve the no-build frontend from the same origin as the API."""
+    return send_from_directory(FRONTEND_DIR, "index.html")
+
+
+@app.route("/frontend/<path:filename>", methods=["GET"])
+def frontend_asset(filename: str) -> Any:
+    """Serve frontend JavaScript, styles, and other local assets."""
+    return send_from_directory(FRONTEND_DIR, filename)
 
 
 @app.route("/api/health", methods=["GET"])
@@ -660,6 +679,7 @@ def health_check() -> Any:
         "models": {
             "primary": LLM_MODEL_PRIMARY,
             "fallback": LLM_FALLBACK,
+            "available": configured_models(),
             "yolo_urls": {k: bool(v) for k, v in YOLO_URLS.items()},
         },
     }), 200
@@ -683,6 +703,12 @@ def detect_endpoint() -> Any:
     except ValueError as e:
         return jsonify({"success": False, "error": str(e), "code": "INVALID_IMAGE"}), 400
 
+    # Detection coordinates refer to the preprocessed image sent upstream, which can
+    # be smaller than the browser's source image. Return that coordinate space so
+    # the Canvas client can project boxes and masks without guessing.
+    with Image.open(io.BytesIO(jpeg_bytes)) as prepared_image:
+        detection_width, detection_height = prepared_image.size
+
     # Parse query/form parameters with defaults
     try:
         conf = float(request.form.get("conf", 0.25))
@@ -691,7 +717,15 @@ def detect_endpoint() -> Any:
     except ValueError:
         return jsonify({"success": False, "error": "Invalid hyperparameter format"}), 400
 
+    if not 0.01 <= conf <= 1.0:
+        return jsonify({"success": False, "error": "conf must be between 0.01 and 1.00"}), 400
+    if not 0.0 <= iou <= 0.95:
+        return jsonify({"success": False, "error": "iou must be between 0.00 and 0.95"}), 400
+    if imgsz not in {320, 640, 1280}:
+        return jsonify({"success": False, "error": "imgsz must be one of 320, 640, or 1280"}), 400
+
     payload, status_code = yolo_service.predict_all(jpeg_bytes, conf=conf, iou=iou, imgsz=imgsz)
+    payload["image_size"] = {"width": detection_width, "height": detection_height}
     return jsonify(payload), status_code
 
 
@@ -728,11 +762,20 @@ def explain_endpoint() -> Any:
 
     yolo_result = data.get("yolo_result", {})
     stream_requested = bool(data.get("stream", False))
+    requested_model = data.get("llm_model") or LLM_MODEL_PRIMARY
+    if not isinstance(requested_model, str) or requested_model not in configured_models():
+        return jsonify({
+            "error": "Requested LLM model is not configured",
+            "code": "INVALID_MODEL",
+            "available_models": configured_models(),
+        }), 400
 
     if not stream_requested:
         # Non-streaming mode
         try:
-            explanation, model_used = explain_with_fallback(clean_b64, mime, yolo_result)
+            explanation, model_used = explain_with_fallback(
+                clean_b64, mime, yolo_result, requested_model=requested_model
+            )
             return jsonify({
                 "explanation": explanation,
                 "model": model_used,
@@ -741,37 +784,55 @@ def explain_endpoint() -> Any:
             logger.error("Explain endpoint error: %s", e)
             return jsonify({
                 "error": "All LLM backends failed",
-                "detail": str(e),
                 "code": "LLM_FAILURE",
             }), 502
 
     # Streaming mode (§7.2 SSE)
     def generate_sse():
-        stripper = StreamThinkingStripper()
         messages = build_clinical_messages(clean_b64, mime, yolo_result)
-        selected_model = LLM_MODEL_PRIMARY
+        emitted_text = False
 
-        try:
-            resp_stream = chat_once(selected_model, messages, stream=True)
-            for chunk in resp_stream:
-                if not chunk.choices:
-                    continue
-                delta = chunk.choices[0].delta
-                text_delta = getattr(delta, "content", "") or ""
-                cleaned_chunk = stripper.feed(text_delta)
-                if cleaned_chunk:
-                    yield f"data: {json.dumps({'text': cleaned_chunk, 'model': selected_model})}\n\n"
+        for selected_model in model_candidates(requested_model):
+            stripper = StreamThinkingStripper()
+            try:
+                resp_stream = chat_once(selected_model, messages, stream=True)
+                for chunk in resp_stream:
+                    if not chunk.choices:
+                        continue
+                    delta = chunk.choices[0].delta
+                    text_delta = getattr(delta, "content", "") or ""
+                    cleaned_chunk = stripper.feed(text_delta)
+                    if cleaned_chunk:
+                        emitted_text = True
+                        payload = json.dumps(
+                            {"text": cleaned_chunk, "model": selected_model},
+                            ensure_ascii=False,
+                        )
+                        yield f"data: {payload}\n\n"
 
-            tail = stripper.flush()
-            if tail:
-                yield f"data: {json.dumps({'text': tail, 'model': selected_model})}\n\n"
-            yield "data: [DONE]\n\n"
+                tail = stripper.flush()
+                if tail:
+                    emitted_text = True
+                    payload = json.dumps(
+                        {"text": tail, "model": selected_model},
+                        ensure_ascii=False,
+                    )
+                    yield f"data: {payload}\n\n"
+                yield "data: [DONE]\n\n"
+                return
 
-        except Exception as stream_err:
-            logger.error("Stream generation failed: %s", stream_err)
-            err_json = json.dumps({"error": str(stream_err), "code": "STREAM_ERROR"})
-            yield f"data: {err_json}\n\n"
-            yield "data: [DONE]\n\n"
+            except Exception as stream_err:
+                logger.error("Stream generation failed on model %s: %s", selected_model, stream_err)
+                if emitted_text:
+                    break
+                logger.warning("Trying next configured model before any text was emitted")
+
+        err_json = json.dumps({
+            "error": "The configured LLM service could not complete the stream",
+            "code": "STREAM_ERROR",
+        })
+        yield f"data: {err_json}\n\n"
+        yield "data: [DONE]\n\n"
 
     return Response(
         stream_with_context(generate_sse()),

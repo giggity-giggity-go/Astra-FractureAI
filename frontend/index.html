@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#080d14">
+  <meta name="description" content="Astra FractureAI — AI 辅助 X 光骨折筛查演示">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%2356d6f4'/%3E%3Cpath d='M18 48 30 14h5l12 34h-8l-2-7H27l-2 7zm11-14h6l-3-11z' fill='%23080d14'/%3E%3C/svg%3E">
+  <title>Astra FractureAI</title>
+  <link rel="preconnect" href="https://unpkg.com" crossorigin>
+  <link rel="stylesheet" href="https://unpkg.com/element-plus@2.11.7/dist/index.css">
+  <link rel="stylesheet" href="https://unpkg.com/cropperjs@1.6.2/dist/cropper.min.css">
+  <link rel="stylesheet" href="/frontend/style.css">
+</head>
+<body>
+  <div id="app" v-cloak>
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="Astra FractureAI 首页"><span class="brand-mark">A</span><span><strong>Astra</strong><small>FractureAI</small></span></a>
+      <div class="header-actions">
+        <span class="status-pill" :class="healthClass" aria-live="polite"><i></i>{{ healthLabel }}</span>
+        <el-button circle text @click="openSettings" title="连接设置" aria-label="连接设置"><el-icon><setting /></el-icon></el-button>
+      </div>
+    </header>
+
+    <main class="shell">
+      <section class="hero">
+        <div><p class="eyebrow">CLINICAL IMAGING WORKSPACE</p><h1>看清影像，而非噪声。</h1><p class="subtitle">三路视觉模型提供可解释证据，Astra 将影像与检测结果汇总为辅助临床建议。</p></div>
+        <div class="hero-note"><span class="pulse"></span><span>所有结果须由专业医生复核</span></div>
+      </section>
+
+      <section class="workspace-grid">
+        <aside class="control-column">
+          <el-card class="panel" shadow="never">
+            <div class="panel-heading"><div><span class="step">01</span><h2>影像输入</h2></div><span class="muted">PNG / JPEG · ≤20 MB</span></div>
+            <div class="dropzone" :class="{ 'has-file': imageUrl }" role="button" tabindex="0" @click="pickFile" @keydown.enter="pickFile" @keydown.space.prevent="pickFile" @dragover.prevent @drop.prevent="dropFile">
+              <img v-if="imageUrl" :src="imageUrl" alt="已上传的 X 光片预览">
+              <template v-else><el-icon><upload-filled /></el-icon><strong>拖入 X 光片</strong><span>或点击选择文件</span></template>
+              <input ref="fileInput" type="file" accept="image/png,image/jpeg" @change="onFileChange" hidden>
+            </div>
+            <div v-if="fileName" class="file-row"><el-icon><picture-filled /></el-icon><span :title="fileName">{{ fileName }}</span><el-button text type="danger" @click.stop="clearImage">移除</el-button></div>
+            <el-button v-if="imageUrl" class="full-width crop-button" plain @click="openCrop"><el-icon><crop /></el-icon> 裁剪与旋转</el-button>
+          </el-card>
+
+          <el-card class="panel" shadow="never">
+            <div class="panel-heading"><div><span class="step">02</span><h2>检测参数</h2></div><el-button text size="small" @click="resetParams">恢复默认</el-button></div>
+            <label class="field-label">置信度阈值 <b>{{ params.conf.toFixed(2) }}</b></label>
+            <el-slider v-model="params.conf" :min="0.01" :max="1" :step="0.01" show-input @change="markResultsStale"></el-slider>
+            <label class="field-label">IoU 阈值 <b>{{ params.iou.toFixed(2) }}</b></label>
+            <el-slider v-model="params.iou" :min="0" :max="0.95" :step="0.01" show-input @change="markResultsStale"></el-slider>
+            <label class="field-label">推理尺寸 <b>{{ params.imgsz }} px</b></label>
+            <el-select v-model="params.imgsz" class="full-width" @change="markResultsStale"><el-option v-for="size in [320, 640, 1280]" :key="size" :label="size + ' px'" :value="size"></el-option></el-select>
+            <p v-if="resultsStale" class="stale-note">参数已变化，请重新检测以更新结果。</p>
+            <el-button class="detect-button" type="primary" :loading="detecting" :disabled="!imageFile" @click="runDetection"><el-icon><magic-stick /></el-icon>{{ detecting ? '三模型分析中…' : '开始骨折检测' }}</el-button>
+          </el-card>
+        </aside>
+
+        <section class="viewer-column">
+          <el-card class="panel viewer-panel" shadow="never">
+            <div class="panel-heading viewer-heading"><div><span class="step">03</span><h2>医学影像查看器</h2></div><span class="zoom-label">{{ Math.round(view.zoom * 100) }}%</span></div>
+            <div class="tool-strip" role="toolbar" aria-label="影像查看工具">
+              <el-button v-for="tool in tools" :key="tool.key" size="small" :type="view.tool === tool.key ? 'primary' : 'default'" :plain="view.tool !== tool.key" @click="setTool(tool.key)" :title="tool.hint">{{ tool.label }}</el-button>
+              <el-button size="small" plain @click="resetView" title="恢复原始视口并清除测量"><el-icon><refresh-left /></el-icon> 重置</el-button>
+            </div>
+            <div class="canvas-wrap" ref="canvasWrap" @wheel.prevent="onWheel" @pointerdown="pointerDown" @pointermove="pointerMove" @pointerup="pointerUp" @pointercancel="pointerUp" @pointerleave="pointerUp">
+              <canvas ref="canvas" :class="['tool-' + view.tool, { dragging: view.dragging }]" aria-label="X 光片与 AI 检测叠加层"></canvas>
+              <div v-if="!imageUrl" class="empty-view"><el-icon><picture-filled /></el-icon><span>影像将在此处显示</span></div>
+              <div class="viewer-legend" v-if="imageUrl"><span><i class="position-dot"></i>骨折位置</span><span><i class="range-dot"></i>骨折范围</span></div>
+              <div class="canvas-hint" v-if="imageUrl">{{ activeToolHint }}</div>
+            </div>
+            <div class="viewer-controls">
+              <div class="control-group"><span>窗宽</span><el-slider v-model="view.window" :min="20" :max="500" :show-tooltip="false" @input="draw"></el-slider><span class="value">{{ view.window }}</span></div>
+              <div class="control-group"><span>窗位</span><el-slider v-model="view.level" :min="0" :max="255" :show-tooltip="false" @input="draw"></el-slider><span class="value">{{ view.level }}</span></div>
+            </div>
+            <div class="measurement-row" v-if="measurement"><span>{{ measurement }}</span><el-button text size="small" @click="clearMeasurements">清除测量</el-button></div>
+          </el-card>
+        </section>
+      </section>
+
+      <section class="results-section" v-if="pipelineState !== 'idle' || errorMessage">
+        <div class="section-title"><div><p class="eyebrow">MODEL OUTPUT</p><h2>临床证据</h2></div><span v-if="results" class="timing">总耗时 {{ formatTime(results.processing_time) }}</span></div>
+        <div class="stage-track" aria-live="polite"><div v-for="stage in stages" :key="stage.key" class="stage" :class="stage.state"><span>{{ stage.state === 'done' ? '✓' : stage.number }}</span>{{ stage.label }}</div></div>
+        <el-alert v-if="partialErrors.length" class="partial-warning" :title="partialErrorText" type="warning" show-icon :closable="false"></el-alert>
+        <el-alert v-if="errorMessage" :title="errorMessage" type="error" show-icon :closable="false"></el-alert>
+
+        <div class="result-grid" v-if="results">
+          <article v-for="card in resultCards" :key="card.key" class="result-card">
+            <div class="card-top"><span class="card-icon" :class="card.tone"><el-icon><component :is="card.icon" /></el-icon></span><span class="card-time">{{ formatTime(card.time) }}</span></div>
+            <h3>{{ card.title }}</h3>
+            <div v-if="card.items.length" class="detections">
+              <div v-for="(item, index) in card.items" :key="card.key + index" class="detection-detail">
+                <div class="detection-line"><span><i v-if="card.key === 'kind'" class="kind-dot" :style="{ background: kindColor(item.name) }"></i>{{ displayLabel(card.key, item) }}</span><strong>{{ formatConfidence(item.confidence) }}</strong></div>
+                <el-progress :percentage="confidencePercent(item.confidence)" :show-text="false" :stroke-width="4" :color="confidenceColor(item.confidence)"></el-progress>
+                <small v-if="card.key !== 'kind' && formatBox(item.box)">{{ formatBox(item.box) }}</small>
+                <small v-if="card.key === 'range' && segmentCount(item)">{{ segmentCount(item) }} 个轮廓点</small>
+              </div>
+            </div>
+            <p v-else class="no-detection">阈值以上未发现结果。</p>
+            <p v-if="card.key === 'kind'" class="card-footnote">类型分类不叠加至影像</p>
+          </article>
+        </div>
+
+        <article v-if="results" class="explanation-card">
+          <div class="explanation-head"><div><p class="eyebrow">ASTRA CLINICAL ASSISTANT</p><h2>辅助评估报告</h2></div><span class="actual-model">{{ actualModel || selectedModel || '等待模型' }}</span></div>
+          <div v-if="explaining && !explanation" class="thinking-state"><i></i>模型正在综合影像与 YOLO 证据…</div>
+          <div v-if="explanation" class="markdown" :class="{ streaming: explaining }" v-html="renderMarkdown(explanation)"></div>
+          <el-button v-if="!explaining && pipelineState === 'error' && results" type="primary" plain @click="runExplanation">重试生成报告</el-button>
+          <p class="clinical-disclaimer">本报告仅用于辅助筛查与演示，不构成诊断或治疗意见。</p>
+        </article>
+      </section>
+    </main>
+
+    <footer><span>Astra FractureAI · {{ actualModel || selectedModel || 'Model pending' }}</span><span>AI 辅助筛查 · 不替代医生诊断</span><span><a href="https://www.producthunt.com/" target="_blank" rel="noopener noreferrer">Product Hunt Challenge</a><a href="https://github.com/giggity-giggity-go/Astra-FractureAI" target="_blank" rel="noopener noreferrer">GitHub</a></span></footer>
+
+    <el-dialog v-model="settingsOpen" title="连接设置" width="min(92vw, 480px)">
+      <p class="dialog-help">浏览器只保存后端地址与模型选择，不接触任何 API 密钥。留空地址即使用当前站点。</p>
+      <label class="field-label">后端地址</label><el-input v-model="draftSettings.backendUrl" placeholder="同源（推荐）" clearable></el-input>
+      <label class="field-label">可用 LLM 模型</label><el-select v-model="draftSettings.model" class="full-width" :loading="health === 'checking'" placeholder="由后端配置提供"><el-option v-for="model in availableModels" :key="model" :label="model" :value="model"></el-option></el-select>
+      <template #footer><el-button @click="settingsOpen = false">取消</el-button><el-button type="primary" @click="saveSettings">保存并检查</el-button></template>
+    </el-dialog>
+
+    <el-dialog v-model="cropOpen" title="裁剪影像" width="min(92vw, 800px)" @opened="initCropper" @closed="destroyCropper">
+      <div class="crop-toolbar"><el-button @click="cropRotate(-90)">左转 90°</el-button><el-button @click="cropRotate(90)">右转 90°</el-button><el-button @click="cropReset">重置裁剪</el-button></div>
+      <div class="crop-stage"><img ref="cropImage" :src="imageUrl" alt="裁剪预览"></div>
+      <template #footer><el-button @click="cropOpen = false">取消</el-button><el-button type="primary" @click="applyCrop">应用裁剪</el-button></template>
+    </el-dialog>
+  </div>
+
+  <script src="https://unpkg.com/vue@3.5.22/dist/vue.global.prod.js"></script>
+  <script src="https://unpkg.com/element-plus@2.11.7/dist/index.full.min.js"></script>
+  <script src="https://unpkg.com/@element-plus/icons-vue@2.3.2/dist/index.iife.min.js"></script>
+  <script src="https://unpkg.com/cropperjs@1.6.2/dist/cropper.min.js"></script>
+  <script src="https://unpkg.com/marked@12.0.2/marked.min.js"></script>
+  <script src="https://unpkg.com/dompurify@3.1.6/dist/purify.min.js"></script>
+  <script src="/frontend/app.js"></script>
+</body>
+</html>
