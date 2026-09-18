@@ -1,138 +1,133 @@
-# test/ · 端到端测试图片库
+# `test/` 测试指南
 
-> ⚠️ 2026-09-17 状态:**本目录当前为空**。用户手动从外部数据集(Kaggle FracAtlas / Roboflow)拖入真实骨折 X 光后,Claude 会基于实际文件名写 `test_e2e.py`。
->
-> **为什么 Claude 不自动复制**:毕设项目 `D:\WORKSTATION\PYTHON\Graduation project\DjangoFractureAI-Clean\` 内部**没有真实骨折 X 光**(只有 24 张完全相同的占位测试图,且不带 FracAtlas/HBFMID/Roboflow 原数据集)。`humurs_fracture1.png` 也不存在 —— 前面 session 提到的文件名是预期命名,不是已有文件。
+本目录用于 Astra-FractureAI 的本地契约测试和可选远程端到端测试。测试目录中的代码、测试影像和运行产物不等同于公开展示素材；提交或分享前必须单独检查隐私、授权和敏感信息。
 
----
+> **医疗隐私提醒：** 不要把真实患者 X 光、姓名、医院、检查号、日期或其他 PHI 放入本目录，也不要把未经授权的远程模型输出提交到 GitHub。
 
-## 1. 命名规范
+## 当前内容
 
-`<部位>_<类型>_<序号>.<ext>`,例如:
+```text
+test/
+├── test_app.py                  # 本地确定性核心测试
+├── test_e2e.py                  # 可选的真实远程 E2E 测试
+├── test_fracture_img/           # 本地测试影像目录
+├── e2e_results.json             # E2E 运行产物，不是固定 fixture
+└── e2e_results.md               # E2E 运行记录，不是稳定 API 文档
+```
 
-- `distal_radius_transverse_001.jpg` — 桡骨远端横形骨折
-- `humerus_spiral_002.png` — 肱骨螺旋形骨折
-- `femur_comminuted_003.jpeg` — 股骨粉碎性骨折
-- `tibia_oblique_004.webp` — 胫骨斜形骨折
+测试影像目录当前包含若干样例 X 光文件。它们仅用于本地测试流程，不应默认视为已获得公开展示授权。公开仓库和 Product Hunt 素材应优先使用经过确认授权、脱敏且适合再分发的数据。
 
-**部位推荐词表**:`distal_radius`(桡骨远端) / `proximal_humerus`(肱骨近端) / `humerus_shaft`(肱骨干) / `femur_neck`(股骨颈) / `tibia_plateau`(胫骨平台)
+## 1. 本地核心测试
 
-**骨折类型推荐词表**:`transverse`(横形) / `oblique`(斜形) / `spiral`(螺旋形) / `comminuted`(粉碎性) / `greenstick`(青枝) / `impacted`(嵌插) / `avulsion`(撕脱)
-
-序号建议 3 位补零(`001` ~ `999`)以便排序。
-
----
-
-## 2. 推荐数据来源
-
-| 来源 | 特点 | 备注 |
-|---|---|---|
-| **Kaggle FracAtlas** | 1477 张带骨折标注,X 光为主 | 需 Kaggle 账号,免费下载 |
-| **Roboflow Universe** | 搜 "fracture xray" / "xray fracture" | 部分需注册,Web 直接下载 |
-| **MURA** | 斯坦福肌肉骨骼 X 光数据集(7 类) | 需申请 |
-| **FracNet** | 肘关节 + 腕关节骨折 | 需 GitHub 下载 |
-
----
-
-## 3. 文件大小 / 格式要求(对齐 `app.py` 校验)
-
-| 项 | 限制 | 出处 |
-|---|---|---|
-| **格式** | PNG / JPG / GIF / WebP | `app.py` `_ALLOWED_MAGIC` |
-| **大小** | ≤ 20MB | `app.py` `MAX_IMAGE_BYTES` |
-| **最小** | ≥ 16 字节 | `app.py` `validate_image` |
-| **分辨率** | 不限,自动压到 1024px | `app.py` `preprocess_image` |
-
-不满足格式 / 大小限制的图会被 `/api/detect` 拒绝并返回英文 error。
-
----
-
-## 4. Smoke test 流程(用户拖图后,Claude 写 `test_e2e.py` 时使用)
-
-### 4.1 启动后端
+默认先运行：
 
 ```bash
-conda activate astra-fractureai
-python app.py
-# 监听 0.0.0.0:7895
+python test/test_app.py
 ```
 
-### 4.2 上传测试图
+这组测试通过 Flask test client 和本地 mock 验证核心行为，主要覆盖：
+
+- `/api/health` 健康响应；
+- `clean_thinking` 和 `StreamThinkingStripper`；
+- 图片格式、大小和预处理校验；
+- `/api/detect` 与 `/api/explain` 的输入校验；
+- 检测参数 `conf`、`iou`、`imgsz` 的范围；
+- 三模型配置和 primary/fallback 路由；
+- SSE fallback 和唯一 `[DONE]` 终止；
+- 错误响应不回显内部异常；
+- `/` 与 `/frontend/*` 静态资源路由。
+
+这不是 pytest 必需套件，脚本本身提供执行入口。`requirements.txt` 未必包含 pytest，因此不要把 `pytest` 命令当作唯一运行方式。
+
+## 2. 可选远程 E2E 测试
 
 ```bash
-curl -F file=@test/distal_radius_transverse_001.jpg \
-  http://localhost:7895/api/detect
+python test/test_e2e.py
 ```
 
-期望返回:
+这是**显式 opt-in 的远程集成测试**，不是离线测试。运行前请确认：
 
-```json
-{
-  "success": true,
-  "positions": [...],
-  "range": [...],
-  "kind": [...],
-  "processing_time": ~3000,
-  "errors": []
-}
+1. 本地 `.env` 已配置，并且没有把它提交到 Git；
+2. YOLO 和 LLM endpoint 当前可访问；
+3. 测试影像允许发送给对应的第三方服务；
+4. 你了解可能产生 API 费用、远程日志和数据处理记录；
+5. 使用的影像不包含真实患者 PHI；
+6. 你不会用该测试覆盖已有的重要结果文件。
+
+脚本会执行：
+
+- 健康检查；
+- 三个样例图的 `/api/detect`；
+- 三个样例图的 `/api/explain`；
+- 记录检测与解释耗时、模型名称和结果摘要。
+
+远程 E2E 不建议：
+
+- 作为新用户首次启动步骤；
+- 作为无条件 CI 步骤；
+- 在没有预算或隐私审批的环境中运行；
+- 使用真实患者影像运行；
+- 用于证明医学诊断准确率或生产 SLA。
+
+## 3. 测试产物
+
+远程 E2E 可能生成：
+
+```text
+test/e2e_results.json
+test/e2e_results.md
 ```
 
-### 4.3 拿 LLM 临床建议
+这些文件是本地运行产物，内容可能包含模型输出、请求结果、耗时或调试信息，不应直接作为公开 README 的证据，也不应未经脱敏就提交到 GitHub。
 
-```bash
-curl -X POST http://localhost:7895/api/explain \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "image_base64": "'$(base64 -w 0 test/distal_radius_transverse_001.jpg)'",
-    "yolo_result": {...4.2 的输出...}
-  }'
-```
+如果需要分享测试结果，请只发布人工审查后的摘要，并确认：
 
-期望返回英文 Markdown 5 段结构(`## Impression` / `## YOLO Correlation` / ...)。
+- 没有 API key、Token、Authorization、Cookie 或内部 URL；
+- 没有患者姓名、医院、检查号、日期或其他 PHI；
+- 没有未经授权的原始模型输出；
+- 没有本机绝对路径或内部调试过程；
+- 测试影像和第三方数据集的许可允许公开展示。
 
----
+## 4. 影像格式和应用限制
 
-## 5. .gitignore
+前端工作流主要允许 PNG/JPEG，应用层图片校验还会检查文件头、大小和可解析性。当前应用的关键输入限制包括：
 
-`test/` 里的图片**不进 git**,原因:
-1. 仓库膨胀(单图几 MB × 几十张 → 几百 MB)
-2. 隐私合规(部分数据集有授权限制)
-
-`.gitkeep` 保留是为了让**目录本身**可被 git track(空目录默认 git 不收)。
-
-`.gitignore` 已配条目:
-
-```
-test/*
-!test/.gitkeep
-!test/README.md
-```
-
----
-
-## 6. 隐私声明
-
-- ✅ 公开数据集(Kaggle/Roboflow/MURA)已**官方脱敏**,无患者身份信息
-- ⚠️ 若从医院 / 内部渠道拿到 X 光,**必须**手动裁剪患者姓名 / ID / 日期后再放入
-- ⚠️ demo 视频 / Product Hunt 投稿时只展示**图像内容 + AI 输出**,不展示元数据
-
----
-
-## 7. 当前状态
-
-| 项 | 状态 |
+| 项目 | 当前规则 |
 |---|---|
-| 目录创建 | ✅ 2026-09-17 16:14 |
-| README 写入 | ✅ 2026-09-17 16:14 |
-| .gitkeep 写入 | ✅ 2026-09-17 16:14 |
-| 实际图片 | ⏳ 等待用户拖入 |
-| `test_e2e.py` 端到端测试 | ⏳ 拖图后另起 plan |
+| 前端上传大小 | 20 MB |
+| 检测置信度 `conf` | `0.01`–`1.00` |
+| IoU `iou` | `0.00`–`0.95` |
+| 推理尺寸 `imgsz` | `320`、`640` 或 `1280` |
+| 预处理 | 自动方向处理、缩放、JPEG 转换 |
 
----
+这些规则用于 Demo 输入校验，不代表生产环境已经完成完整的资源耗尽防护、认证、限流或临床数据治理。
 
-## 8. 用户后续动作清单
+## 5. 常见问题
 
-1. ⬜ 下载 3-5 张真实骨折 X 光(从 §2 来源)
-2. ⬜ 按 §1 命名规范重命名
-3. ⬜ 拖入 `D:\WORKSTATION\ChatGPT Competition\Astra-FractureAI\test\`
-4. ⬜ 告诉 Claude "图已拖入",触发 Phase B 写 `test_e2e.py`
+### 缺少环境变量
+
+`app.py` 会在导入阶段校验必要的 YOLO/LLM 配置。请从模板创建本地 `.env`，并填写自己的凭据和 endpoint；不要把凭据粘贴到 issue、README、截图或测试产物中。
+
+### 远程 endpoint 超时或返回错误
+
+先运行本地核心测试，确认代码契约没有回归；再检查 endpoint、网络、配额和服务状态。不要为了排障把真实 key 写入日志或直接公开上游响应。
+
+### 端口已被占用
+
+确认是否已有 `python app.py` 进程运行，并使用 `.env` 中的 `PORT`。优先在原终端按 `Ctrl+C` 正常停止进程，再重新启动。
+
+### E2E 运行结果不稳定
+
+远程 E2E 受网络、第三方模型、配额、超时和 fallback 影响。它不是固定性能基准，也不能用来证明医学准确率。
+
+### 测试影像是否可以公开
+
+不能仅凭文件名或“来自公开数据集”的说法判断可以公开。请确认来源许可、脱敏状态、元数据和再分发条件。任何可见姓名、医院名称、检查号或其他 PHI 都必须排除。
+
+## 6. 测试安全底线
+
+- 不运行会自动上传真实患者影像的测试。
+- 不把 `.env`、密钥或原始远程返回结果提交到 Git。
+- 不把 `e2e_results.json` 当作可公开的固定 fixture。
+- 不用测试结果宣称系统可以自动诊断或替代医生。
+- 不在没有授权、预算和数据处理确认的情况下运行远程 E2E。
