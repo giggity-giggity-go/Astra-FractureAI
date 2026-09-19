@@ -1,6 +1,11 @@
 /* Workbench template kept separate to keep app.js readable. */
 window.AstraFractureAI = window.AstraFractureAI || {};
 window.AstraFractureAI.workbenchTemplate = String.raw`    <main class="shell">
+      <nav class="workbench-subnav" aria-label="Workbench navigation">
+        <el-button class="back-button" type="primary" plain size="small" aria-label="Back to demo overview" title="Back to demo overview (Esc)" @click="$emit('goto', 'home')">
+          <el-icon><back /></el-icon><span>Back</span>
+        </el-button>
+      </nav>
       <section class="hero">
         <div><p class="eyebrow">CLINICAL IMAGING WORKSPACE</p><h1>See the image, not the noise.</h1><p class="subtitle">Three vision models provide explainable evidence; Astra combines the image and findings into clinical assistance.</p></div>
         <div class="hero-note"><span class="pulse"></span><span>All results require review by a qualified clinician</span></div>
@@ -9,7 +14,7 @@ window.AstraFractureAI.workbenchTemplate = String.raw`    <main class="shell">
       <section class="workspace-grid">
         <aside class="control-column">
           <el-card class="panel" shadow="never">
-            <div class="panel-heading"><div><span class="step">01</span><h2>Image Input</h2></div><el-button text size="small" @click="$emit('goto', 'home')">Home</el-button><span class="muted">PNG / JPEG · ≤20 MB</span></div>
+            <div class="panel-heading"><div><span class="step">01</span><h2>Image Input</h2></div><span class="muted">PNG / JPEG · ≤20 MB</span></div>
             <div class="dropzone" :class="{ 'has-file': imageUrl }" role="button" tabindex="0" @click="pickFile" @keydown.enter="pickFile" @keydown.space.prevent="pickFile" @dragover.prevent @drop.prevent="dropFile">
               <img v-if="imageUrl" :src="imageUrl" alt="Uploaded X-ray preview">
               <template v-else><el-icon><upload-filled /></el-icon><strong>Drop an X-ray image</strong><span>or click to browse</span></template>

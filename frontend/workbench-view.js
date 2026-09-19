@@ -51,7 +51,8 @@
       const resultsStale = ref(false);
       const explanation = ref('');
       const actualModel = ref('');
-      const FIXED_MODELS = ['gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-luna'];
+      const detectionId = ref('');
+      const FIXED_MODELS = ['gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-luna', 'gpt-5.6-terra'];
       const availableModels = ref(FIXED_MODELS);
       const health = ref('checking');
       // Mirror local health to the root-level shared ref so HomeView's pill stays in sync.
@@ -98,7 +99,7 @@
       const explaining = computed(() => ['llm_thinking', 'llm_streaming'].includes(pipelineState.value));
       const partialErrors = computed(() => Array.isArray(results.value?.errors) ? results.value.errors : []);
       const partialErrorText = computed(() => `Some vision models did not complete: ${partialErrors.value.map(error => error.model || error.name || 'Unknown model').join(', ')}. Remaining results are still available.`);
-      const healthLabel = computed(() => ({ checking: 'Checking API', healthy: 'API connected', offline: 'API unavailable' }[health.value]));
+      const healthLabel = computed(() => ({ checking: 'check', healthy: 'connected', offline: 'check failed' }[health.value]));
       const healthClass = computed(() => `health-${health.value}`);
       const activeToolHint = computed(() => tools.find(tool => tool.key === view.tool)?.hint || 'Use the tool to inspect the image');
       const stages = computed(() => {
@@ -443,6 +444,8 @@
           if (!response.ok || data.success === false) throw new Error(data.error || `Detection failed (HTTP ${response.status}）`);
           if (runId !== generation) return;
           results.value = data;
+          detectionId.value = data.detection_id || '';
+          if (!detectionId.value) throw new Error('The server did not return a detection reference.');
           pipelineState.value = 'yolo_done';
           draw();
           await runExplanation(runId);
@@ -455,25 +458,25 @@
         }
       }
       async function runExplanation(existingRunId) {
-        if (!imageFile.value || !results.value) return;
+        if (!detectionId.value || !results.value) return;
         let runId = existingRunId;
         if (runId === undefined) {
           cancelRequests();
           runId = generation;
           activeRequest = new AbortController();
         }
+        const taskId = detectionId.value;
+        detectionId.value = '';
         pipelineState.value = 'llm_thinking';
         explanation.value = '';
         actualModel.value = '';
         errorMessage.value = '';
         try {
-          const imageBase64 = await fileToDataUrl(imageFile.value);
-          if (runId !== generation) return;
           const response = await fetch(api('/api/explain'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             signal: activeRequest.signal,
-            body: JSON.stringify({ image_base64: imageBase64, yolo_result: results.value, stream: true })
+            body: JSON.stringify({ detection_id: taskId, stream: true })
           });
           if (!response.ok) {
             const failure = await response.json().catch(() => ({}));

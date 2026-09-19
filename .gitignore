@@ -86,3 +86,15 @@ test/*
 !test/.gitkeep
 !test/README.md
 !test/test_app.py
+
+# --- 维护脚本(本地执行,不进仓库) ---
+# scripts/ 是开发期一次性脚本,如凭据扫描 / 历史重写 / 临时清理
+# 真正交付给运行时的代码仅在源码根目录,不放脚本目录
+scripts/*
+!scripts/.gitkeep
+
+# --- 安全相关工件(本地工作区文档,不进仓库) ---
+# security-test/ 收纳凭据 / GitGuardian 事件 / 临时扫描产物等
+# 安全策略正式版本由运行时仓库维护,这里只放本地调试与事件归档
+security-test/*
+!security-test/.gitkeep

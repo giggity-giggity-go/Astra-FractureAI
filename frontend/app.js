@@ -147,7 +147,7 @@
       // Simpler: register a global setter that WorkbenchView will call after its health ref updates.
       const setHealth = (val) => { sharedHealth.value = val; };
       provide('setAppHealth', setHealth);
-      const sharedModel = ref(loadSavedSettings().llmModel || '');
+      const sharedModel = ref(loadSavedSettings().llmModel || 'gpt-6-astra');
       provide('appSelectedModel', sharedModel);
       provide('setAppSelectedModel', (model) => { sharedModel.value = model; });
       onMounted(() => { document.addEventListener('keydown', handleGlobalKey); });

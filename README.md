@@ -13,6 +13,7 @@
 </p>
 
 <p>
+  <a href="#live-demo">Live demo</a> ·
   <a href="#quick-start">Quick start</a> ·
   <a href="#how-it-works">How it works</a> ·
   <a href="frontend/README.md">Frontend</a> ·
@@ -83,6 +84,17 @@ flowchart LR
 | Frontend | Vue 3, Element Plus, Cropper.js, Canvas API |
 | Streaming and rendering | Fetch/ReadableStream, Server-Sent Events, marked, DOMPurify |
 | Delivery | Flask serves the frontend and `/api/*` routes from one origin |
+
+## Live demo
+
+A publicly reachable build of this preview is available at:
+
+- **URL**: <https://astra.haavk-fractureai.online:7860>
+
+Notes:
+
+- Browsers may show a "Not Secure" badge because the deployment uses port `7860` and an unverified certificate. Treat the link as a research preview only.
+- The deployed build may be running a newer or older revision than the repository HEAD. For reproducible behaviour, run the local demo (`python app.py`) against a pinned commit.
 
 ## Quick start
 

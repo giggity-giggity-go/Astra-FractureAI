@@ -23,7 +23,7 @@
         </div>
       </header>
       <keep-alive :include="['WorkbenchView']"><component :is="currentView === 'home' ? 'home-view' : 'workbench-view'" ref="workbench" @goto="goto"></component></keep-alive>
-      <footer><span>Astra FractureAI · {{ selectedModel || 'Model pending' }}</span><span>AI-assisted screening · Not a substitute for physician diagnosis</span><span><a href="https://www.producthunt.com/" target="_blank" rel="noopener noreferrer">Product Hunt Challenge</a><a href="https://github.com/giggity-giggity-go/Astra-FractureAI" target="_blank" rel="noopener noreferrer">GitHub</a></span></footer>
+      <footer><span>Astra FractureAI · {{ selectedModel || 'Model pending' }}</span><span>AI-assisted screening · Not a substitute for physician diagnosis</span><span><a href="https://www.producthunt.com/posts/astra-fractureai" target="_blank" rel="noopener noreferrer">Product Hunt</a><a href="https://github.com/giggity-giggity-go/Astra-FractureAI" target="_blank" rel="noopener noreferrer">GitHub</a></span></footer>
 
   </div>
 
