@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Block commits that introduce high-entropy secrets. Enable with:
+#   git config core.hooksPath .githooks
+set -euo pipefail
+python scripts/check_no_secrets.py --mode staged
